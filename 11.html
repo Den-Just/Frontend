@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Курсы валют ЦБ РФ</title>
+<style>
+  body { font-family: 'Inter', sans-serif; margin: 0; background: linear-gradient(135deg, #181818 0%, #ff6600 100%); color: #fff; }
+  header { background: #ff6600; color: #fff; padding: 22px 10px 16px 10px; text-align: center; }
+  header h1 { margin: 0; font-weight: 700; font-size: 1.8rem; letter-spacing: 1px; }
+  main { flex-grow: 1; padding: 20px; max-width: 1100px; margin: 0 auto; width: 100%; }
+  #currencies { display: grid; grid-template-columns: repeat(auto-fill,minmax(280px,1fr)); gap: 20px; }
+  .card { background: #222; color: #fff; border-radius: 14px; box-shadow: 0 4px 12px rgb(0 0 0 / 0.18); padding: 22px 24px; cursor: pointer; user-select: none; transition: transform 0.2s, box-shadow 0.3s, border 0.2s; display: flex; flex-direction: column; justify-content: space-between; border: 2px solid transparent; }
+  .card:hover, .card:focus-visible { outline: none; box-shadow: 0 8px 24px rgb(255 102 0 / 0.18); transform: translateY(-6px); border-color: #ff6600; }
+  .currency-header { display: flex; justify-content: space-between; align-items: baseline; }
+  .currency-name { font-weight: 700; font-size: 1.2rem; color: #fff; }
+  .currency-code { font-weight: 600; font-size: 0.9rem; color: #ff9000; background: #2d2d2d; padding: 4px 10px; border-radius: 20px; user-select: text; }
+  .rate { margin-top: 14px; font-size: 2rem; font-weight: 700; color: #ff6600; }
+  .diff { margin-top: 8px; font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .diff.positive { color: #1fd655; }
+  .diff.negative { color: #ff3c28; }
+  .diff.neutral { color: #ff9000; }
+  #overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none; z-index: 900; }
+  #converter { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #181818; color: #fff; border-radius: 14px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.35); padding: 28px 32px; max-width: 360px; width: 90%; display: none; z-index: 1000; font-size: 1rem; border: 2px solid #ff6600; }
+  #converter h2 { margin-top: 0; font-weight: 700; color: #ff6600; margin-bottom: 16px; text-align: center; }
+  #converter-currency-name { font-weight: 600; font-size: 1.1rem; margin-bottom: 20px; text-align: center; color: #fff; }
+  label { display: block; margin-bottom: 8px; font-weight: 600; color: #ff9000; }
+  #amount-input { width: 100%; padding: 10px 14px; font-size: 1.1rem; border-radius: 8px; border: 1.5px solid #ff9000; background: #181818; color: #fff; transition: border-color 0.3s; box-sizing: border-box; }
+  #amount-input:focus { border-color: #ff6600; outline: none; }
+  #conversion-result { margin-top: 18px; font-weight: 700; font-size: 1.25rem; text-align: center; min-height: 1.5em; color: #fff; }
+  #close-btn { margin-top: 24px; width: 100%; background: #ff6600; color: #fff; border: none; border-radius: 10px; padding: 12px 0; font-weight: 700; font-size: 1.1rem; cursor: pointer; transition: background-color 0.25s; }
+  #close-btn:hover, #close-btn:focus { background: #ff9000; outline: none; }
+  #refresh-btn { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #ff6600; color: #fff; border: none; border-radius: 30px; padding: 16px 42px; font-size: 1.2rem; font-weight: 700; box-shadow: 0 4px 16px rgb(0 0 0 / 0.18); cursor: pointer; z-index: 2000; transition: background 0.2s, box-shadow 0.2s; letter-spacing: 1px; }
+  #refresh-btn:hover, #refresh-btn:focus { background: #ff9000; box-shadow: 0 6px 24px rgb(255 102 0 / 0.25); outline: none; }
+  @media (max-width: 480px) {
+    .rate { font-size: 1.5rem; }
+    #converter { padding: 20px 12px; }
+    #refresh-btn { width: 90vw; min-width: 0; padding: 14px 0; font-size: 1rem; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Актуальные курсы валют ЦБ РФ</h1>
+</header>
+<main>
+  <div id="currencies" aria-live="polite" aria-label="Список валют"></div>
+</main>
+<button id="refresh-btn" type="button">Обновить курсы</button>
+<div id="overlay" tabindex="-1"></div>
+<div id="converter" role="dialog" aria-modal="true" aria-labelledby="converter-title" aria-describedby="converter-desc">
+  <h2 id="converter-title">Конвертация в рубли</h2>
+  <div id="converter-currency-name"></div>
+  <label for="amount-input">Введите сумму в валюте</label>
+  <input id="amount-input" type="number" min="0" step="any" autocomplete="off" inputmode="decimal" />
+  <div id="conversion-result" aria-live="polite"></div>
+  <button id="close-btn" aria-label="Закрыть окно конвертации">Закрыть</button>
+</div>
+<script>
+const API_URL = "https://www.cbr-xml-daily.ru/daily_json.js";
+const currenciesContainer = document.getElementById("currencies");
+const converter = document.getElementById("converter");
+const overlay = document.getElementById("overlay");
+const amountInput = document.getElementById("amount-input");
+const conversionResult = document.getElementById("conversion-result");
+const converterCurrencyName = document.getElementById("converter-currency-name");
+const closeBtn = document.getElementById("close-btn");
+const refreshBtn = document.getElementById("refresh-btn");
+let selectedCurrency = null;
+
+// Получаем URL с параметром для обхода кэша
+function getApiUrl() {
+  return API_URL + "?nocache=" + Date.now();
+}
+
+async function fetchCurrencies() {
+  refreshBtn.disabled = true;
+  refreshBtn.textContent = "Обновление...";
+  try {
+    const response = await fetch(getApiUrl());
+    if (!response.ok) throw new Error("Ошибка загрузки данных");
+    const json = await response.json();
+    renderCurrencies(json.Valute);
+  } catch (error) {
+    currenciesContainer.innerHTML = `<p style="color:#ff3c28; text-align:center;">${error.message}</p>`;
+  } finally {
+    refreshBtn.disabled = false;
+    refreshBtn.textContent = "Обновить курсы";
+  }
+}
+
+function renderCurrencies(valutes) {
+  currenciesContainer.innerHTML = "";
+  for (const code in valutes) {
+    if (Object.prototype.hasOwnProperty.call(valutes, code)) {
+      const cur = valutes[code];
+      const rate = cur.Value.toFixed(4);
+      const diff = cur.Value - cur.Previous;
+      const diffAbs = Math.abs(diff).toFixed(4);
+      let diffClass = "neutral";
+      let diffSign = "→";
+      let arrow = "→";
+      if (diff > 0) {
+        diffClass = "positive";
+        diffSign = "+";
+        arrow = "▲";
+      } else if (diff < 0) {
+        diffClass = "negative";
+        diffSign = "";
+        arrow = "▼";
+      }
+      const card = document.createElement("div");
+      card.className = "card";
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.setAttribute("aria-pressed", "false");
+      card.setAttribute("aria-label", `${cur.Name}, курс ${rate} рублей, изменение ${diffSign}${diffAbs} рублей по сравнению с предыдущим днём`);
+      card.innerHTML = `
+        <div class="currency-header">
+          <div class="currency-name">${cur.Name}</div>
+          <div class="currency-code">${cur.CharCode} / ${cur.Nominal} шт.</div>
+        </div>
+        <div class="rate">${rate} ₽</div>
+        <div class="diff ${diffClass}">
+          <span>${arrow}</span>
+          <span>${diffSign}${diffAbs} ₽</span>
+        </div>
+      `;
+      card.addEventListener("click", () => openConverter(cur));
+      card.addEventListener("keypress", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openConverter(cur);
+        }
+      });
+      currenciesContainer.appendChild(card);
+    }
+  }
+}
+
+function openConverter(currency) {
+  selectedCurrency = currency;
+  converterCurrencyName.textContent = `${currency.Name} (${currency.CharCode})`;
+  amountInput.value = "";
+  conversionResult.textContent = "";
+  converter.style.display = "block";
+  overlay.style.display = "block";
+  amountInput.focus();
+}
+
+function closeConverter() {
+  converter.style.display = "none";
+  overlay.style.display = "none";
+  selectedCurrency = null;
+}
+
+function convertAmount() {
+  if (!selectedCurrency) return;
+  const amount = parseFloat(amountInput.value);
+  if (isNaN(amount) || amount < 0) {
+    conversionResult.textContent = "Введите корректное число";
+    conversionResult.style.color = "#ff3c28";
+    return;
+  }
+  const rubles = (amount / selectedCurrency.Nominal) * selectedCurrency.Value;
+  conversionResult.textContent = `${amount} ${selectedCurrency.CharCode} = ${rubles.toFixed(2)} ₽`;
+  conversionResult.style.color = "#fff";
+}
+
+amountInput.addEventListener("input", convertAmount);
+closeBtn.addEventListener("click", closeConverter);
+overlay.addEventListener("click", closeConverter);
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && converter.style.display === "block") {
+    closeConverter();
+  }
+});
+refreshBtn.addEventListener("click", fetchCurrencies);
+
+fetchCurrencies();
+setInterval(fetchCurrencies, 10 * 60 * 1000);
+</script>
+</body>
+</html>
